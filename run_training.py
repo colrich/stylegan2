@@ -34,7 +34,7 @@ _valid_configs = [
 #----------------------------------------------------------------------------
 
 def run(dataset, data_dir, result_dir, config_id, num_gpus, total_kimg, gamma, mirror_augment, metrics):
-    train     = EasyDict(run_func_name='training.training_loop.training_loop') # Options for training loop.
+    train     = EasyDict(run_func_name='training.training_loop.training_loop', resume_pkl='results/00010-stylegan2-vangogh-1gpu-config-f/network-snapshot-000008.pkl', resume_kimg=8) # Options for training loop.
     G         = EasyDict(func_name='training.networks_stylegan2.G_main')       # Options for generator network.
     D         = EasyDict(func_name='training.networks_stylegan2.D_stylegan2')  # Options for discriminator network.
     G_opt     = EasyDict(beta1=0.0, beta2=0.99, epsilon=1e-8)                  # Options for generator optimizer.
@@ -49,7 +49,7 @@ def run(dataset, data_dir, result_dir, config_id, num_gpus, total_kimg, gamma, m
     train.data_dir = data_dir
     train.total_kimg = total_kimg
     train.mirror_augment = mirror_augment
-    train.image_snapshot_ticks = train.network_snapshot_ticks = 10
+    train.image_snapshot_ticks = train.network_snapshot_ticks = 1
     sched.G_lrate_base = sched.D_lrate_base = 0.002
     sched.minibatch_size_base = 32
     sched.minibatch_gpu_base = 4

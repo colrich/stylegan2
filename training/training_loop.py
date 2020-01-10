@@ -265,6 +265,7 @@ def training_loop(
     running_mb_counter = 0
     while cur_nimg < total_kimg * 1000:
         if dnnlib.RunContext.get().should_stop(): break
+        print('tick ' + str(cur_tick) + ' in training loop, cur_nimg is ' + str(cur_nimg) + ', ')
 
         # Choose training parameters and configure training ops.
         sched = training_schedule(cur_nimg=cur_nimg, training_set=training_set, **sched_args)
@@ -278,6 +279,7 @@ def training_loop(
         # Run training ops.
         feed_dict = {lod_in: sched.lod, lrate_in: sched.G_lrate, minibatch_size_in: sched.minibatch_size, minibatch_gpu_in: sched.minibatch_gpu}
         for _repeat in range(minibatch_repeats):
+            print('\tstarting round ' + str(_repeat) + ' out of ' + str(minibatch_repeats))
             rounds = range(0, sched.minibatch_size, sched.minibatch_gpu * num_gpus)
             run_G_reg = (lazy_regularization and running_mb_counter % G_reg_interval == 0)
             run_D_reg = (lazy_regularization and running_mb_counter % D_reg_interval == 0)
