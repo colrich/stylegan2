@@ -100,6 +100,9 @@ class SubmitConfig(util.EasyDict):
         self.nvprof = False
         self.local = internal.local.TargetOptions()
         self.datasets = []
+        self.should_resume = False
+        self.resume_pkl = ""
+        self.resume_kimg = 0
 
         # (automatically populated)
         self.run_id = None
@@ -209,7 +212,6 @@ def _create_run_dir_local(submit_config: SubmitConfig) -> str:
 
 
 def _get_next_run_id_local(run_dir_root: str) -> int:
-    """Reads all directory names in a given directory (non-recursive) and returns the next (increasing) run id. Assumes IDs are numbers at the start of the directory names."""
     dir_names = [d for d in os.listdir(run_dir_root) if os.path.isdir(os.path.join(run_dir_root, d))]
     r = re.compile("^\\d+")  # match one or more digits at the start of the string
     run_id = 0
@@ -222,6 +224,45 @@ def _get_next_run_id_local(run_dir_root: str) -> int:
             run_id = max(run_id, i + 1)
 
     return run_id
+
+def _get_last_run_dir(run_dir_root: str, run_desc: str) -> str:
+    dir_names = [d for d in os.listdir(run_dir_root) if os.path.isdir(os.path.join(run_dir_root, d))]
+    r = re.compile("^\\d+")  # match one or more digits at the start of the string
+    run_id = 0
+
+    for dir_name in dir_names:
+        m = r.match(dir_name)
+
+        if m is not None:
+            i = int(m.group())
+            run_id = max(run_id, i)
+
+    return os.path.join(run_dir_root, "{0:05d}-{1}".format(run_id, run_desc))
+
+
+def _get_last_run_latest_snapshot(last_run_dir: str) -> str:
+    r = re.compile('^.*-(\\d+)\.pkl')
+    fnames = [f for f in os.listdir(last_run_dir)]
+    ms = [r.match(fn) for fn in fnames]
+    
+    highest = -1;
+    snapshot_name = None
+    for m in ms:
+        if m is not None and int(m.group(1)) > highest:
+            highest = int(m.group(1))
+            snapshot_name = m.group()
+    return snapshot_name
+
+def _get_last_run_latest_kimg(last_run_dir: str) -> int:
+    r = re.compile('^.*-(\\d+)\.pkl')
+    fnames = [f for f in os.listdir(last_run_dir)]
+    ms = [r.match(fn) for fn in fnames]
+    
+    highest = -1;
+    for m in ms:
+        if m is not None and int(m.group(1)) > highest:
+            highest = int(m.group(1))
+    return highest
 
 
 def _populate_run_dir(submit_config: SubmitConfig, run_dir: str) -> None:
@@ -330,7 +371,17 @@ def submit_run(submit_config: SubmitConfig, run_func_name: str, **run_func_kwarg
     #--------------------------------------------------------------------
     # Prepare submission by populating the run dir
     #--------------------------------------------------------------------
-    host_run_dir = _create_run_dir_local(submit_config)
+    if submit_config.should_resume == False:
+        host_run_dir = _create_run_dir_local(submit_config)
+    else:
+        run_dir_root = get_path_from_template(submit_config.run_dir_root, PathType.AUTO)
+        host_run_dir = _get_last_run_dir(run_dir_root, submit_config.run_desc)
+        submit_config.run_id = _get_last_run_latest_kimg(host_run_dir)
+        submit_config.run_name = "{0:05d}-{1}".format(submit_config.run_id, submit_config.run_desc)
+        submit_config.resume_kimg = _get_last_run_latest_kimg(host_run_dir)
+        submit_config.resume_pkl = os.path.join(host_run_dir, _get_last_run_latest_snapshot(host_run_dir))
+
+
 
     submit_config.task_name = "{0}-{1:05d}-{2}".format(submit_config.user_name, submit_config.run_id, submit_config.run_desc)
     docker_valid_name_regex = "^[a-zA-Z0-9][a-zA-Z0-9_.-]+$"

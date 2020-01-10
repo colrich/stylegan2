@@ -142,6 +142,11 @@ def training_loop(
     grid_size, grid_reals, grid_labels = misc.setup_snapshot_image_grid(training_set, **grid_args)
     misc.save_image_grid(grid_reals, dnnlib.make_run_dir_path('reals.png'), drange=training_set.dynamic_range, grid_size=grid_size)
 
+    if dnnlib.submit_config.should_resume == True:
+        resume_pkl = dnnlib.submit_config.resume_pkl
+        resume_kimg = dnnlib.submit_config.resume_kimg
+        print('resuming last training run with pkl: ' + resume_pkl + ' and kimg: ' + str(resume_kimg))
+
     # Construct or load networks.
     with tf.device('/gpu:0'):
         if resume_pkl is None or resume_with_new_nets:
