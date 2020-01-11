@@ -230,7 +230,13 @@ def _get_last_run_dir(run_dir_root: str, run_desc: str) -> str:
     r = re.compile("^\\d+")  # match one or more digits at the start of the string
     run_id = 0
 
+    rge = re.compile('^\\d+-generate-images')
+
     for dir_name in dir_names:
+        discard = rge.match(dir_name)
+        if discard is not None:
+            continue
+
         m = r.match(dir_name)
 
         if m is not None:
