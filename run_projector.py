@@ -31,10 +31,11 @@ def project_image(proj, targets, png_prefix, num_snapshots):
 
 #----------------------------------------------------------------------------
 
-def project_generated_images(network_pkl, seeds, num_snapshots, truncation_psi):
+def project_generated_images(submit_config, network_pkl, seeds, num_snapshots, truncation_psi):
     print('Loading networks from "%s"...' % network_pkl)
     _G, _D, Gs = pretrained_networks.load_networks(network_pkl)
     proj = projector.Projector()
+    proj.verbose = submit_config.verbose
     proj.set_network(Gs)
     noise_vars = [var for name, var in Gs.components.synthesis.vars.items() if name.startswith('noise')]
 
@@ -52,14 +53,16 @@ def project_generated_images(network_pkl, seeds, num_snapshots, truncation_psi):
 
 #----------------------------------------------------------------------------
 
-def project_real_images(network_pkl, dataset_name, data_dir, num_images, num_snapshots):
+def project_real_images(submit_config, network_pkl, dataset_name, data_dir, num_images, num_snapshots):
     print('Loading networks from "%s"...' % network_pkl)
     _G, _D, Gs = pretrained_networks.load_networks(network_pkl)
     proj = projector.Projector()
+    proj.verbose = submit_config.verbose
     proj.set_network(Gs)
 
     print('Loading images from "%s"...' % dataset_name)
     dataset_obj = dataset.load_dataset(data_dir=data_dir, tfrecord_dir=dataset_name, max_label_size=0, repeat=False, shuffle_mb=0)
+    print('dso shape: ' + str(dataset_obj.shape) + ' vs gs shape: ' + str(Gs.output_shape[1:]))
     assert dataset_obj.shape == Gs.output_shape[1:]
 
     for image_idx in range(num_images):
@@ -79,6 +82,17 @@ def _parse_num_range(s):
         return range(int(m.group(1)), int(m.group(2))+1)
     vals = s.split(',')
     return [int(x) for x in vals]
+
+def _str_to_bool(v):
+    if isinstance(v, bool):
+        return v
+    if v.lower() in ('yes', 'true', 't', 'y', '1'):
+        return True
+    elif v.lower() in ('no', 'false', 'f', 'n', '0'):
+        return False
+    else:
+        raise argparse.ArgumentTypeError('Boolean value expected.')
+
 
 #----------------------------------------------------------------------------
 
@@ -111,6 +125,7 @@ Run 'python %(prog)s <subcommand> --help' for subcommand help.''',
     project_generated_images_parser.add_argument('--num-snapshots', type=int, help='Number of snapshots (default: %(default)s)', default=5)
     project_generated_images_parser.add_argument('--truncation-psi', type=float, help='Truncation psi (default: %(default)s)', default=1.0)
     project_generated_images_parser.add_argument('--result-dir', help='Root directory for run results (default: %(default)s)', default='results', metavar='DIR')
+    project_generated_images_parser.add_argument('--verbose', help='activate verbose mode during run (defaults: %(default)s)', default=False, metavar='BOOL', type=_str_to_bool)
 
     project_real_images_parser = subparsers.add_parser('project-real-images', help='Project real images')
     project_real_images_parser.add_argument('--network', help='Network pickle filename', dest='network_pkl', required=True)
@@ -119,6 +134,7 @@ Run 'python %(prog)s <subcommand> --help' for subcommand help.''',
     project_real_images_parser.add_argument('--num-snapshots', type=int, help='Number of snapshots (default: %(default)s)', default=5)
     project_real_images_parser.add_argument('--num-images', type=int, help='Number of images to project (default: %(default)s)', default=3)
     project_real_images_parser.add_argument('--result-dir', help='Root directory for run results (default: %(default)s)', default='results', metavar='DIR')
+    project_real_images_parser.add_argument('--verbose', help='activate verbose mode during run (defaults: %(default)s)', default=False, metavar='BOOL', type=_str_to_bool)
 
     args = parser.parse_args()
     subcmd = args.command
@@ -133,6 +149,8 @@ Run 'python %(prog)s <subcommand> --help' for subcommand help.''',
     sc.local.do_not_copy_source_files = True
     sc.run_dir_root = kwargs.pop('result_dir')
     sc.run_desc = kwargs.pop('command')
+    sc.verbose = kwargs.pop('verbose')
+    print('setting verbose mode to ' + str(sc.verbose))
 
     func_name_map = {
         'project-generated-images': 'run_projector.project_generated_images',

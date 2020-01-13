@@ -103,6 +103,7 @@ class SubmitConfig(util.EasyDict):
         self.should_resume = False
         self.resume_pkl = ""
         self.resume_kimg = 0
+        self.verbose = False
 
         # (automatically populated)
         self.run_id = None
@@ -231,9 +232,19 @@ def _get_last_run_dir(run_dir_root: str, run_desc: str) -> str:
     run_id = 0
 
     rge = re.compile('^\\d+-generate-images')
+    rpr = re.compile('^\\d+-project-real-images')
+    rpg = re.compile('^\\d+-project-generated-images')
 
     for dir_name in dir_names:
         discard = rge.match(dir_name)
+        if discard is not None:
+            continue
+
+        discard = rpr.match(dir_name)
+        if discard is not None:
+            continue
+
+        discard = rpg.match(dir_name)
         if discard is not None:
             continue
 

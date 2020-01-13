@@ -270,11 +270,14 @@ def training_loop(
     running_mb_counter = 0
     while cur_nimg < total_kimg * 1000:
         if dnnlib.RunContext.get().should_stop(): break
-        print('tick ' + str(cur_tick) + ' in training loop, cur_nimg is ' + str(cur_nimg) + ', ')
 
         # Choose training parameters and configure training ops.
         sched = training_schedule(cur_nimg=cur_nimg, training_set=training_set, **sched_args)
         assert sched.minibatch_size % (sched.minibatch_gpu * num_gpus) == 0
+
+        print('tick ' + str(cur_tick) + ' in training loop, cur_nimg is ' + str(cur_nimg) + ', next tick at ' + str(tick_start_nimg + sched.tick_kimg * 1000) + ' kimg, time since last tick is ' + str(dnnlib.RunContext.get().get_time_since_last_update()) + ' seconds')
+        print('next tick expected in ' + str(1750 - dnnlib.RunContext.get().get_time_since_last_update()) + ' seconds')
+
         training_set.configure(sched.minibatch_gpu, sched.lod)
         if reset_opt_for_new_lod:
             if np.floor(sched.lod) != np.floor(prev_lod) or np.ceil(sched.lod) != np.ceil(prev_lod):
@@ -340,8 +343,9 @@ def training_loop(
 
             # Save snapshots.
             if image_snapshot_ticks is not None and (cur_tick % image_snapshot_ticks == 0 or done):
-                grid_fakes = Gs.run(grid_latents, grid_labels, is_validation=True, minibatch_size=sched.minibatch_gpu)
-                misc.save_image_grid(grid_fakes, dnnlib.make_run_dir_path('fakes%06d.png' % (cur_nimg // 1000)), drange=drange_net, grid_size=grid_size)
+                pass
+#                grid_fakes = Gs.run(grid_latents, grid_labels, is_validation=True, minibatch_size=sched.minibatch_gpu)
+#                misc.save_image_grid(grid_fakes, dnnlib.make_run_dir_path('fakes%06d.png' % (cur_nimg // 1000)), drange=drange_net, grid_size=grid_size)
             if network_snapshot_ticks is not None and (cur_tick % network_snapshot_ticks == 0 or done):
                 pkl = dnnlib.make_run_dir_path('network-snapshot-%06d.pkl' % (cur_nimg // 1000))
                 misc.save_pkl((G, D, Gs), pkl)
