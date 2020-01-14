@@ -234,6 +234,8 @@ def _get_last_run_dir(run_dir_root: str, run_desc: str) -> str:
     rge = re.compile('^\\d+-generate-images')
     rpr = re.compile('^\\d+-project-real-images')
     rpg = re.compile('^\\d+-project-generated-images')
+    rgg = re.compile('^\\d+-generate-grid-of-variants')
+    rgl = re.compile('^\\d+-get-latents-for-seeds')
 
     for dir_name in dir_names:
         discard = rge.match(dir_name)
@@ -245,6 +247,14 @@ def _get_last_run_dir(run_dir_root: str, run_desc: str) -> str:
             continue
 
         discard = rpg.match(dir_name)
+        if discard is not None:
+            continue
+
+        discard = rgg.match(dir_name)
+        if discard is not None:
+            continue
+
+        discard = rgl.match(dir_name)
         if discard is not None:
             continue
 

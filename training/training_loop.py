@@ -6,6 +6,7 @@
 
 """Main training script."""
 
+import json
 import numpy as np
 import tensorflow as tf
 import dnnlib
@@ -141,6 +142,9 @@ def training_loop(
     training_set = dataset.load_dataset(data_dir=dnnlib.convert_path(data_dir), verbose=True, **dataset_args)
     grid_size, grid_reals, grid_labels = misc.setup_snapshot_image_grid(training_set, **grid_args)
     misc.save_image_grid(grid_reals, dnnlib.make_run_dir_path('reals.png'), drange=training_set.dynamic_range, grid_size=grid_size)
+    print('grid size is ' + str(grid_size))
+    print('grid labels are ' + str(grid_labels))
+    print('at reals.png creation time, random seed was set to ' + str(np.random.get_state()[1][0]))
 
     if dnnlib.submit_config.should_resume == True:
         resume_pkl = dnnlib.submit_config.resume_pkl
@@ -164,8 +168,17 @@ def training_loop(
     G.print_layers(); D.print_layers()
     sched = training_schedule(cur_nimg=total_kimg*1000, training_set=training_set, **sched_args)
     grid_latents = np.random.randn(np.prod(grid_size), *G.input_shape[1:])
+    print('grid_size is ' + str(grid_size))
+    print('G input shape is ' + str(*G.input_shape[1:]))
+#    print('grid_latents is ' + str(grid_latents))
+# uncomment this to output the latents for each image in the grid
+#    for index in range(len(grid_latents)):
+#        f = open('latents\'+str(index)+'.json', 'w')
+#        json.dump(grid_latents[index].tolist(), f)
+#        f.close()
     grid_fakes = Gs.run(grid_latents, grid_labels, is_validation=True, minibatch_size=sched.minibatch_gpu)
     misc.save_image_grid(grid_fakes, dnnlib.make_run_dir_path('fakes_init.png'), drange=drange_net, grid_size=grid_size)
+    print('at fakes_init.png creation time, random seed was set to ' + str(np.random.get_state()[1][0]))
 
     # Setup training inputs.
     print('Building TensorFlow graph...')
@@ -268,6 +281,7 @@ def training_loop(
     tick_start_nimg = cur_nimg
     prev_lod = -1.0
     running_mb_counter = 0
+    prev_tick_times = []
     while cur_nimg < total_kimg * 1000:
         if dnnlib.RunContext.get().should_stop(): break
 
@@ -276,9 +290,14 @@ def training_loop(
         assert sched.minibatch_size % (sched.minibatch_gpu * num_gpus) == 0
 
         print('tick ' + str(cur_tick) + ' in training loop, cur_nimg is ' + str(cur_nimg) + ', next tick at ' + str(tick_start_nimg + sched.tick_kimg * 1000) + ' kimg, time since last tick is ' + str(dnnlib.RunContext.get().get_time_since_last_update()) + ' seconds')
-        print('next tick expected in ' + str(1750 - dnnlib.RunContext.get().get_time_since_last_update()) + ' seconds')
+        if len(prev_tick_times) > 0:
+            expected_tick_time = sum(prev_tick_times) / len(prev_tick_times)
+        else:
+            expected_tick_time = 1750 # this is the usual time on my 1x1080ti setup
+        print('next tick expected in ' + str(expected_tick_time - dnnlib.RunContext.get().get_time_since_last_update()) + ' seconds')
 
         training_set.configure(sched.minibatch_gpu, sched.lod)
+        print('\tminibatch_gpu: ' + str(sched.minibatch_gpu) + ' / lod: ' + str(sched.lod))
         if reset_opt_for_new_lod:
             if np.floor(sched.lod) != np.floor(prev_lod) or np.ceil(sched.lod) != np.ceil(prev_lod):
                 G_opt.reset_optimizer_state(); D_opt.reset_optimizer_state()
@@ -326,6 +345,11 @@ def training_loop(
             tick_start_nimg = cur_nimg
             tick_time = dnnlib.RunContext.get().get_time_since_last_update()
             total_time = dnnlib.RunContext.get().get_time_since_start() + resume_time
+
+            # we want to track the amount of time each tick takes to use to calculate the expected time until next checkpoint
+            # however the first tick in each training run is extremely abbreviated and so we don't want to count its run time
+            if cur_tick != 0:
+                prev_tick_times.append(tick_time)
 
             # Report progress.
             print('tick %-5d kimg %-8.1f lod %-5.2f minibatch %-4d time %-12s sec/tick %-7.1f sec/kimg %-7.2f maintenance %-6.1f gpumem %.1f' % (
