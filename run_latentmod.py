@@ -11,6 +11,8 @@ import dnnlib
 import dnnlib.tflib as tflib
 import re
 import sys
+import os
+import csv
 
 import projector
 import pretrained_networks
@@ -86,7 +88,7 @@ def generate_grid_of_variants(submit_config, network_pkl, truncation_psi, latent
     print('Loading networks from "%s"...' % network_pkl)
     _G, _D, Gs = pretrained_networks.load_networks(network_pkl)
 
-    grid_size = (30, 50)
+    grid_size = (32, 1)
     grid_labels = []
 
     grid_latents = np.ndarray(shape=(grid_size[0]*grid_size[1],512))
@@ -113,9 +115,72 @@ def get_latents_for_seeds(submit_config, network_pkl, seeds):
         json.dump(z.tolist(), f)
         f.close()
 
+def find_common_latents(submit_config, network_pkl, input_dir):
+    print('starting process of finding common latents in directory ' + input_dir)
+
+    tflib.init_tf({'rnd.np_random_seed': 1000})
+
+    print('Loading networks from "%s"...' % network_pkl)
+    _G, _D, Gs = pretrained_networks.load_networks(network_pkl)
+
+    # parse the seeds out of the filenames in the input directory
+    seeds = []
+    seed_re = re.compile('^seed(\\d+)\.png')
+    for path, dirs, files in os.walk(input_dir):
+        matches = [seed_re.match(fn) for fn in files]
+        seeds += [match.group(1) for match in matches]
+    
+    # get latents for each seed in the list
+    latents = {}
+    print('operating on seeds: ' + str(seeds))
+    for seed_idx, seed in enumerate(seeds):
+        print('Projecting seed %s ...' % (seed))
+        rnd = np.random.RandomState(int(seed))
+        z = rnd.randn(1, *Gs.input_shape[1:])
+        latents[seed] = z
+#        f = open(dnnlib.make_run_dir_path(str(seed)+'.json'), 'w')
+#        json.dump(z.tolist(), f)
+#        f.close()
+
+    # compute average for each latent across all seeds
+    print('we have latents for ' + str(len(latents)) + ' seeds')
+    sums = np.zeros(512, np.float64)
+    for seed in latents:
+        this_seed_latents = latents[seed]
+#        print(str(this_seed_latents[0]))
+        for i in range(len(this_seed_latents[0])):
+            sums[i] += this_seed_latents[0][i]
+
+    avgs = [(sums[i] / len(latents)) for i in range(len(sums))]
+#    print(str(avgs))
+    f = open(dnnlib.make_run_dir_path('avgs.json'), 'w')
+    json.dump([avgs], f)
+    f.close()
+
+
+    # output the averages, and then for each seed the variance from the average for each latent
+    approx0 = np.zeros(512, np.int)
+    with open(dnnlib.make_run_dir_path('latents-analysis.csv'), 'w', newline='') as csvfile:
+        wrtr = csv.writer(csvfile, quoting=csv.QUOTE_MINIMAL)
+        wrtr.writerow(avgs)
+
+        for seed in latents:
+            this_seed_latents = latents[seed][0]
+            diffs = [(this_seed_latents[i] - avgs[i]) for i in range(len(this_seed_latents))]
+            wrtr.writerow(diffs)
+            for i in range(len(diffs)):
+                if diffs[i] <= .0000001:
+                    # if the diff between this seed's latent at this position and the average at
+                    # this position is approximately 0, that's a sign that this position is part of
+                    # what makes this type of image appear - these are what we're trying to find
+                    #print('seed ' + str(seed) + ' has approx 0 at ' + str(i))
+                    approx0[i] += 1
+
+    for i in range(len(approx0)):
+        print(str(i) + ': ' + str(approx0[i]) + ' approximate zeros')
+
 def _parse_num_range(s):
     '''Accept either a comma separated list of numbers 'a,b,c' or a range 'a-c' and return as a list of ints.'''
-
     range_re = re.compile(r'^(\d+)-(\d+)$')
     m = range_re.match(s)
     if m:
@@ -134,7 +199,7 @@ def _str_to_bool(v):
         raise argparse.ArgumentTypeError('Boolean value expected.')
 
 
-#----------------------------------------------------------------------------
+#---------------------------------------------------------------------------- 30/*-1257 
 
 _examples = '''examples:
 
@@ -172,6 +237,11 @@ Run 'python %(prog)s <subcommand> --help' for subcommand help.''',
     get_latents_for_seeds_parser.add_argument('--result-dir', help='Root directory for run results (default: %(default)s)', default='results', metavar='DIR')
     get_latents_for_seeds_parser.add_argument('--verbose', help='activate verbose mode during run (defaults: %(default)s)', default=False, metavar='BOOL', type=_str_to_bool)
 
+    find_common_latents_parser = subparsers.add_parser('find-common-latents', help='Write out a csv containing latents for a directory of seeds along with difference between latent and average of that latent for each item in the vector')
+    find_common_latents_parser.add_argument('--network', help='Network pickle filename', dest='network_pkl', required=True)
+    find_common_latents_parser.add_argument('--result-dir', help='Root directory for run results (default: %(default)s)', default='results', metavar='DIR')
+    find_common_latents_parser.add_argument('--input-dir', help='Directory containing generated images to find common latents between (default: %(default)s)', default='latent-inputs', metavar='DIR')
+
     project_real_images_parser = subparsers.add_parser('project-real-images', help='Project real images')
     project_real_images_parser.add_argument('--network', help='Network pickle filename', dest='network_pkl', required=True)
     project_real_images_parser.add_argument('--data-dir', help='Dataset root directory', required=True)
@@ -194,12 +264,14 @@ Run 'python %(prog)s <subcommand> --help' for subcommand help.''',
     sc.local.do_not_copy_source_files = True
     sc.run_dir_root = kwargs.pop('result_dir')
     sc.run_desc = kwargs.pop('command')
-    sc.verbose = kwargs.pop('verbose')
-    print('setting verbose mode to ' + str(sc.verbose))
+    if 'verbose' in kwargs:
+        sc.verbose = kwargs.pop('verbose')
+        print('setting verbose mode to ' + str(sc.verbose))
 
     func_name_map = {
         'generate-grid-of-variants': 'run_latentmod.generate_grid_of_variants',
-        'get-latents-for-seeds': 'run_latentmod.get_latents_for_seeds'
+        'get-latents-for-seeds': 'run_latentmod.get_latents_for_seeds',
+        'find-common-latents': 'run_latentmod.find_common_latents'
     }
     dnnlib.submit_run(sc, func_name_map[subcmd], **kwargs)
 
