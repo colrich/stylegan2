@@ -13,6 +13,7 @@ import re
 import sys
 import os
 import csv
+import math
 
 import projector
 import pretrained_networks
@@ -99,6 +100,102 @@ def generate_grid_of_variants(submit_config, network_pkl, truncation_psi, latent
     misc.save_image_grid(grid_fakes, dnnlib.make_run_dir_path('latentmod-1.png'), drange=[-1,1], grid_size=grid_size)
 
 
+def generate_mutated_grid(submit_config, network_pkl, truncation_psi, latents_file, minibatch_size=4):
+    print('starting process of generating grid of variants of ' + latents_file)
+
+    tflib.init_tf({'rnd.np_random_seed': 1000})
+
+    grid_size = (128, 1)
+    grid_labels = []
+
+    f = open(latents_file, 'r')
+    original_latents = np.array(json.load(f))
+    f.close()
+    print('loaded original latents from ' + latents_file)
+
+    print('Loading networks from "%s"...' % network_pkl)
+    _G, _D, Gs = pretrained_networks.load_networks(network_pkl)
+    w_avg = Gs.get_var('dlatent_avg') # [component]
+
+    Gs_syn_kwargs = dnnlib.EasyDict()
+    Gs_syn_kwargs.randomize_noise = False
+    Gs_syn_kwargs.minibatch_size = minibatch_size
+
+    all_latents = []
+    ltnts = original_latents[0]
+    print('Generating W vectors...')
+    for i in range(grid_size[0]*grid_size[1]):
+        ltnts = mutate_latents(ltnts, 4)
+        all_latents.append(ltnts)
+    all_z = np.stack(all_latents)
+#    all_z = np.stack([mutate_latents(original_latents[0], i) for i in range(grid_size[0]*grid_size[1])])
+    all_w = Gs.components.mapping.run(all_z, None) # [minibatch, layer, component]
+    all_w = w_avg + (all_w - w_avg) * truncation_psi # [minibatch, layer, component]
+
+    print('Generating images...')
+    all_images = Gs.components.synthesis.run(all_w, **Gs_syn_kwargs) # [minibatch, height, width, channel]
+    misc.save_image_grid(all_images, dnnlib.make_run_dir_path('latentmod-1.png'), drange=[-1,1], grid_size=grid_size)
+    
+def mutate_latents(latents, num_mutations):
+    ltnts = np.array(latents)
+    for i in range(num_mutations):
+        index = math.floor(np.random.random()*len(latents))
+#        increment = ((np.random.random()*3)-1)
+        increment = np.random.random()
+        print('chosen index is ' + str(index) + ', adding ' + str(increment))
+        ltnts[index] += increment
+    return ltnts
+
+
+def generate_interpolation_between(submit_config, network_pkl, truncation_psi, latents_file_start, latents_file_end, num_steps, minibatch_size=4):
+    print('starting process of generating interpolation between ' + latents_file_start + ' and ' + latents_file_end)
+
+    tflib.init_tf({'rnd.np_random_seed': 1000})
+
+    grid_size = (num_steps, 1)
+    grid_labels = []
+
+    f = open(latents_file_start, 'r')
+    start_original_latents = np.array(json.load(f))
+    f.close()
+    print('loaded start latents from ' + latents_file_start)
+
+    f = open(latents_file_end, 'r')
+    end_original_latents = np.array(json.load(f))
+    f.close()
+    print('loaded end latents from ' + latents_file_end)
+
+    print('Loading networks from "%s"...' % network_pkl)
+    _G, _D, Gs = pretrained_networks.load_networks(network_pkl)
+    w_avg = Gs.get_var('dlatent_avg') # [component]
+
+    Gs_syn_kwargs = dnnlib.EasyDict()
+    Gs_syn_kwargs.randomize_noise = False
+    Gs_syn_kwargs.minibatch_size = minibatch_size
+
+    all_latents = []
+    start_ltnts = start_original_latents[0]
+    end_ltnts = end_original_latents[0]
+    ltnt = np.array(start_ltnts)
+    each_step_increment = [((end_ltnts[i] - start_ltnts[i]) / num_steps) for i in range(len(start_ltnts))] #np.zeros(len(start_ltnts))
+    print(str(each_step_increment))
+    print('Generating W vectors...')
+    for i in range(grid_size[0]*grid_size[1]):
+        for inc_index in range(len(each_step_increment)):
+            ltnt[inc_index] += each_step_increment[inc_index]
+        all_latents.append(ltnt)
+        ltnt = np.array(ltnt)
+    all_z = np.stack(all_latents)
+#    all_z = np.stack([mutate_latents(original_latents[0], i) for i in range(grid_size[0]*grid_size[1])])
+    all_w = Gs.components.mapping.run(all_z, None) # [minibatch, layer, component]
+    all_w = w_avg + (all_w - w_avg) * truncation_psi # [minibatch, layer, component]
+
+    print('Generating images...')
+    all_images = Gs.components.synthesis.run(all_w, **Gs_syn_kwargs) # [minibatch, height, width, channel]
+    misc.save_image_grid(all_images, dnnlib.make_run_dir_path('interpolation.png'), drange=[-1,1], grid_size=grid_size)
+
+
+
 def get_latents_for_seeds(submit_config, network_pkl, seeds):
     print('starting process of getting latents for seeds ' + str(seeds))
 
@@ -169,7 +266,7 @@ def find_common_latents(submit_config, network_pkl, input_dir):
             diffs = [(this_seed_latents[i] - avgs[i]) for i in range(len(this_seed_latents))]
             wrtr.writerow(diffs)
             for i in range(len(diffs)):
-                if diffs[i] <= .0000001:
+                if diffs[i] <= .01:
                     # if the diff between this seed's latent at this position and the average at
                     # this position is approximately 0, that's a sign that this position is part of
                     # what makes this type of image appear - these are what we're trying to find
@@ -231,6 +328,15 @@ Run 'python %(prog)s <subcommand> --help' for subcommand help.''',
     generate_grid_of_variants_parser.add_argument('--latents-file', help='File containing a 512-element json array floats representing the latents of the image to generate variations on (default: %(default)s)', metavar='FILE', required=True)
     generate_grid_of_variants_parser.add_argument('--verbose', help='activate verbose mode during run (defaults: %(default)s)', default=False, metavar='BOOL', type=_str_to_bool)
 
+    generate_interpolation_between_parser = subparsers.add_parser('generate-interpolation-between', help="Generate a strip of images interpolation between start and end")
+    generate_interpolation_between_parser.add_argument('--network', help='Network pickle filename', dest='network_pkl', required=True)
+    generate_interpolation_between_parser.add_argument('--truncation-psi', type=float, help='Truncation psi (default: %(default)s)', default=1.0)
+    generate_interpolation_between_parser.add_argument('--result-dir', help='Root directory for run results (default: %(default)s)', default='results', metavar='DIR')
+    generate_interpolation_between_parser.add_argument('--latents-file-start', help='File containing a 512-element json array floats representing the latents of the image to start the generation (default: %(default)s)', metavar='FILE', required=True)
+    generate_interpolation_between_parser.add_argument('--latents-file-end', help='File containing a 512-element json array floats representing the latents of the image to finish the generation (default: %(default)s)', metavar='FILE', required=True)
+    generate_interpolation_between_parser.add_argument('--num-steps', help='Number of steps to interpolate between the images', type=int, required=True)
+    generate_interpolation_between_parser.add_argument('--verbose', help='activate verbose mode during run (defaults: %(default)s)', default=False, metavar='BOOL', type=_str_to_bool)
+
     get_latents_for_seeds_parser = subparsers.add_parser('get-latents-for-seeds', help='Write out latents for seeds')
     get_latents_for_seeds_parser.add_argument('--network', help='Network pickle filename', dest='network_pkl', required=True)
     get_latents_for_seeds_parser.add_argument('--seeds', type=_parse_num_range, help='List of random seeds', default=range(3))
@@ -269,7 +375,9 @@ Run 'python %(prog)s <subcommand> --help' for subcommand help.''',
         print('setting verbose mode to ' + str(sc.verbose))
 
     func_name_map = {
-        'generate-grid-of-variants': 'run_latentmod.generate_grid_of_variants',
+#        'generate-grid-of-variants': 'run_latentmod.generate_grid_of_variants',
+        'generate-grid-of-variants': 'run_latentmod.generate_mutated_grid',
+        'generate-interpolation-between': 'run_latentmod.generate_interpolation_between',
         'get-latents-for-seeds': 'run_latentmod.get_latents_for_seeds',
         'find-common-latents': 'run_latentmod.find_common_latents'
     }

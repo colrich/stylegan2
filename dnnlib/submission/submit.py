@@ -237,6 +237,7 @@ def _get_last_run_dir(run_dir_root: str, run_desc: str) -> str:
     rgg = re.compile('^\\d+-generate-grid-of-variants')
     rgl = re.compile('^\\d+-get-latents-for-seeds')
     rfc = re.compile('^\\d+-find-common-latents')
+    rgi = re.compile('^\\d+-generate-interpolation-between')
 
     for dir_name in dir_names:
         discard = rge.match(dir_name)
@@ -260,6 +261,10 @@ def _get_last_run_dir(run_dir_root: str, run_desc: str) -> str:
             continue
 
         discard = rfc.match(dir_name)
+        if discard is not None:
+            continue
+
+        discard = rgi.match(dir_name)
         if discard is not None:
             continue
 
